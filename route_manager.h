@@ -18,7 +18,7 @@
 struct RoutingSettings {
     double wait_time, velocity;
     //wait time in mins
-    //velocity in metres / min
+    //velocity in metres per min
 };
 
 
