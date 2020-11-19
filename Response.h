@@ -11,7 +11,7 @@
 namespace RouteItem {
     struct Item {
         double time;
-        Item(double time) : time(time) {}
+        explicit Item(double time) : time(time) {}
         virtual ~Item() = default;
         virtual std::ostream &operator<<(std::ostream &ostream) const = 0;
     };
@@ -34,7 +34,9 @@ namespace RouteItem {
             : Item(time), bus_name(std::move(bus_name)), span_cnt(span_cnt) {}
         std::ostream &operator<<(std::ostream &ostream) const override {
             return ostream << "        {\n"
-                           << "            " << R"("type": "Bus")" << ",\n"
+                           << "            "
+                           << R"("type": "Bus")"
+                           << ",\n"
                            << "            \"bus\": " << '"' << bus_name << ",\n"
                            << "            \"span_count\": " << span_cnt << ",\n"
                            << "            \"time\": " << time << "\n"
@@ -50,7 +52,7 @@ protected:
 public:
     virtual ~Response() = default;
 
-    explicit Response(int request_id);
+    explicit Response(int request_id) : request_id(request_id) {}
     virtual std::ostream &operator<<(std::ostream &os) const = 0;
 };
 
@@ -62,12 +64,50 @@ private:
     int num_of_stops_on_route = 0, num_of_unique_stops = 0, route_length = 0;
     double curvature = 0;
 
-    static double CoordsWiseRouteLength(const Bus &bus);
+    static double CoordsWiseRouteLength(const Bus &bus) {
+        double res = 0;
+        const auto &stops = bus.GetStops();
+        for (size_t i = 0; i != stops.size() - 1; ++i)
+            res += Coordinates::dist(
+                    stops[i]->GetCoordinates(), stops[i + 1]->GetCoordinates());
+        if (!bus.isCircular())
+            res *= 2;
+        return res;
+    }
 
 public:
-    explicit BusStats(const Bus &bus, int request_id);
+    explicit BusStats(const Bus &bus, int request_id)
+        : Response(request_id),
+        bus_name(bus.GetId()),
+        num_of_unique_stops([&] {
+          std::vector<Stop *> v = bus.GetStops();
+          std::sort(v.begin(), v.end());
+          return std::unique(v.begin(), v.end()) - v.begin();
+        }()),
+        num_of_stops_on_route(bus.isCircular() ? bus.GetStops().size() : 2 * bus.GetStops().size() - 1) {
 
-    std::ostream &operator<<(std::ostream &os) const override;
+            route_length = 0;
+            const auto &stops = bus.GetStops();
+            for (auto it = stops.begin(); it != std::prev(stops.end()); ++it) {
+                route_length += Stop::dist(*it, *std::next(it));
+            }
+            if (!bus.isCircular())
+                for (auto it = stops.rbegin(); it != std::prev(stops.rend()); ++it)
+                    route_length += Stop::dist(*it, *std::next(it));
+
+
+            curvature = route_length / CoordsWiseRouteLength(bus);
+    }
+
+    std::ostream &operator<<(std::ostream &os) const override {
+        return os << "    {\n"
+                  << "        \"request_id\": " << request_id << ",\n"
+                  << "        \"stop_count\": " << num_of_stops_on_route << ",\n"
+                  << "        \"unique_stop_count\": " << num_of_unique_stops << ",\n"
+                  << "        \"route_length\": " << route_length << ",\n"
+                  << "        \"curvature\": " << std::setprecision(16) << curvature << '\n'
+                  << "    }";
+    }
 };
 
 struct StopStats : public Response {
@@ -76,15 +116,44 @@ private:
     std::vector<std::string_view> names_of_buses_that_stop_there;
 
 public:
-    explicit StopStats(const Stop &stop, int request_id);
-    std::ostream &operator<<(std::ostream &os) const override;
+    explicit StopStats(const Stop &stop, int request_id) : Response(request_id), stop_name(stop.GetName()) {
+        for (auto *bus_ptr : stop.GetBuses()) {
+            names_of_buses_that_stop_there.push_back(bus_ptr->GetId());
+        }
+    }
+    std::ostream &operator<<(std::ostream &os) const override {
+        os << "    {\n";
+        os << "        \"request_id\": " << request_id << ",\n";
+        os << "        \"buses\": ";
+        os << "[";
+        if (names_of_buses_that_stop_there.empty()) {
+            os << "]\n";
+        } else {
+            os << "\n";
+            for (auto it = names_of_buses_that_stop_there.begin(); it != names_of_buses_that_stop_there.end(); ++it) {
+                if (it != prev(names_of_buses_that_stop_there.end()))
+                    os << "            \"" << *it << "\",\n";
+                else
+                    os << "            \"" << *it << "\"\n";
+            }
+            os << "        ]\n";
+        }
+        os << "    }";
+        return os;
+    }
 };
 
 
 struct StatsNotFound : public Response {
 public:
-    explicit StatsNotFound(int request_id);
-    std::ostream &operator<<(std::ostream &os) const override;
+    explicit StatsNotFound(int request_id) : Response(request_id) {}
+    std::ostream &operator<<(std::ostream &os) const override {
+        return os << "    {\n"
+                  << "        \"request_id\": " << request_id << ",\n"
+                  << "        \"error_message\": "
+                  << "        \"not found\""
+                  << "    }";
+    }
 };
 
 
